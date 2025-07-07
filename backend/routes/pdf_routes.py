@@ -1,7 +1,6 @@
 from fastapi import APIRouter, HTTPException, File, UploadFile, Depends, Form
 from fastapi.responses import FileResponse
 from typing import List, Optional
-from motor.motor_asyncio import AsyncIOMotorDatabase
 from services.pdf_service import PDFService
 from models.pdf_models import (
     PDFDocument, PDFUploadResponse, Annotation, AnnotationCreate, 
@@ -14,8 +13,8 @@ import json
 
 router = APIRouter()
 
-async def get_pdf_service(db: AsyncIOMotorDatabase = Depends(lambda: None)) -> PDFService:
-    # This will be injected by the main app
+def get_pdf_service() -> PDFService:
+    from server import db
     return PDFService(db)
 
 @router.post("/upload", response_model=PDFUploadResponse)
