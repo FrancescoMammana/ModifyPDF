@@ -4,11 +4,16 @@ from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
 import os
 import logging
+import sys
 from pathlib import Path
 from pydantic import BaseModel, Field
 from typing import List
 import uuid
 from datetime import datetime
+
+# Add backend directory to Python path
+sys.path.insert(0, '/app/backend')
+
 from routes.pdf_routes import router as pdf_router
 from services.pdf_service import PDFService
 
@@ -51,19 +56,6 @@ async def create_status_check(input: StatusCheckCreate):
 async def get_status_checks():
     status_checks = await db.status_checks.find().to_list(1000)
     return [StatusCheck(**status_check) for status_check in status_checks]
-
-# Dependency to provide PDFService
-def get_pdf_service() -> PDFService:
-    return PDFService(db)
-
-# Update pdf_routes dependency
-def get_pdf_service_dependency():
-    return get_pdf_service()
-
-# Include PDF routes with dependency injection
-pdf_router.dependency_overrides.update({
-    "get_pdf_service": get_pdf_service_dependency
-})
 
 # Include PDF routes
 api_router.include_router(pdf_router, prefix="/pdf", tags=["pdf"])
