@@ -26,13 +26,14 @@ import PDFViewer from './PDFViewer';
 import ToolPanel from './ToolPanel';
 import SignatureLibrary from './SignatureLibrary';
 import LayerManager from './LayerManager';
-import { mockPDFData } from '../data/mockData';
+import ApiService from '../services/apiService';
 
 const PDFEditor = () => {
   const [pdfFile, setPdfFile] = useState(null);
-  const [pdfData, setPdfData] = useState(mockPDFData);
+  const [pdfDocument, setPdfDocument] = useState(null);
+  const [pdfId, setPdfId] = useState(null);
   const [currentPage, setCurrentPage] = useState(1);
-  const [totalPages, setTotalPages] = useState(3);
+  const [totalPages, setTotalPages] = useState(1);
   const [zoomLevel, setZoomLevel] = useState(1);
   const [selectedTool, setSelectedTool] = useState('select');
   const [annotations, setAnnotations] = useState([]);
@@ -40,42 +41,90 @@ const PDFEditor = () => {
   const [layers, setLayers] = useState([]);
   const [history, setHistory] = useState([]);
   const [historyIndex, setHistoryIndex] = useState(-1);
-  const [isSignatureDialogOpen, setIsSignatureDialogOpen] = useState(false);
+  const [isLoading, setIsLoading] = useState(false);
   const fileInputRef = useRef(null);
   const { toast } = useToast();
 
   useEffect(() => {
-    // Load saved signatures from localStorage
-    const savedSignatures = localStorage.getItem('pdfEditor_signatures');
-    if (savedSignatures) {
-      setSignatures(JSON.parse(savedSignatures));
-    }
+    // Load signatures when component mounts
+    loadSignatures();
+    
+    // Check API health
+    ApiService.healthCheck()
+      .then(data => {
+        console.log('API Health Check:', data);
+      })
+      .catch(error => {
+        console.error('API Health Check Failed:', error);
+        toast({
+          title: "API Connection Error",
+          description: "Unable to connect to the backend server",
+          variant: "destructive"
+        });
+      });
   }, []);
 
-  const handleFileUpload = (event) => {
-    const file = event.target.files[0];
-    if (file) {
-      if (file.size > 100 * 1024 * 1024) { // 100MB limit
-        toast({
-          title: "File too large",
-          description: "PDF file must be smaller than 100MB",
-          variant: "destructive"
-        });
-        return;
-      }
-      
-      if (file.type !== 'application/pdf') {
-        toast({
-          title: "Invalid file type",
-          description: "Please select a PDF file",
-          variant: "destructive"
-        });
-        return;
-      }
+  useEffect(() => {
+    // Load annotations when PDF changes
+    if (pdfId) {
+      loadAnnotations();
+    }
+  }, [pdfId]);
 
+  const loadSignatures = async () => {
+    try {
+      const signatures = await ApiService.getSignatures();
+      setSignatures(signatures);
+    } catch (error) {
+      console.error('Error loading signatures:', error);
+      // Fallback to local storage for signatures
+      const savedSignatures = localStorage.getItem('pdfEditor_signatures');
+      if (savedSignatures) {
+        setSignatures(JSON.parse(savedSignatures));
+      }
+    }
+  };
+
+  const loadAnnotations = async () => {
+    try {
+      const response = await ApiService.getAnnotations(pdfId);
+      setAnnotations(response.annotations || []);
+    } catch (error) {
+      console.error('Error loading annotations:', error);
+    }
+  };
+
+  const handleFileUpload = async (event) => {
+    const file = event.target.files[0];
+    if (!file) return;
+
+    if (file.size > 100 * 1024 * 1024) { // 100MB limit
+      toast({
+        title: "File too large",
+        description: "PDF file must be smaller than 100MB",
+        variant: "destructive"
+      });
+      return;
+    }
+    
+    if (file.type !== 'application/pdf') {
+      toast({
+        title: "Invalid file type",
+        description: "Please select a PDF file",
+        variant: "destructive"
+      });
+      return;
+    }
+
+    setIsLoading(true);
+    try {
+      const uploadResponse = await ApiService.uploadPDF(file);
+      
       setPdfFile(file);
-      setPdfData(URL.createObjectURL(file));
+      setPdfDocument(uploadResponse);
+      setPdfId(uploadResponse.id);
       setCurrentPage(1);
+      setTotalPages(uploadResponse.total_pages);
       setAnnotations([]);
       setLayers([]);
       setHistory([]);
@@ -85,6 +134,15 @@ const PDFEditor = () => {
         title: "PDF loaded successfully",
         description: `${file.name} is ready for editing`
       });
+    } catch (error) {
+      console.error('Error uploading PDF:', error);
+      toast({
+        title: "Upload failed",
+        description: "Failed to upload PDF. Please try again.",
+        variant: "destructive"
+      });
+    } finally {
+      setIsLoading(false);
     }
   };
 
@@ -112,37 +170,76 @@ const PDFEditor = () => {
     });
   };
 
-  const handleAddAnnotation = (annotation) => {
-    const newAnnotation = {
-      ...annotation,
-      id: Date.now(),
-      page: currentPage,
-      layer: layers.length
-    };
-    
-    setAnnotations(prev => [...prev, newAnnotation]);
-    addToHistory([...annotations, newAnnotation]);
-    
-    toast({
-      title: "Annotation added",
-      description: `${annotation.type} added to page ${currentPage}`
-    });
+  const handleAddAnnotation = async (annotationData) => {
+    if (!pdfId) {
+      toast({
+        title: "No PDF loaded",
+        description: "Please upload a PDF first",
+        variant: "destructive"
+      });
+      return;
+    }
+
+    try {
+      const annotationRequest = {
+        ...annotationData,
+        pdf_id: pdfId,
+        page: currentPage,
+        layer: layers.length
+      };
+
+      const newAnnotation = await ApiService.createAnnotation(annotationRequest);
+      setAnnotations(prev => [...prev, newAnnotation]);
+      addToHistory([...annotations, newAnnotation]);
+      
+      toast({
+        title: "Annotation added",
+        description: `${annotationData.type} added to page ${currentPage}`
+      });
+    } catch (error) {
+      console.error('Error adding annotation:', error);
+      toast({
+        title: "Error adding annotation",
+        description: "Failed to save annotation. Please try again.",
+        variant: "destructive"
+      });
+    }
   };
 
-  const handleAddSignature = (signature) => {
-    const newSignature = {
-      ...signature,
-      id: Date.now(),
-      page: currentPage
-    };
-    
-    setAnnotations(prev => [...prev, newSignature]);
-    addToHistory([...annotations, newSignature]);
-    
-    toast({
-      title: "Signature added",
-      description: `Signature placed on page ${currentPage}`
-    });
+  const handleAddSignature = async (signatureData) => {
+    if (!pdfId) {
+      toast({
+        title: "No PDF loaded",
+        description: "Please upload a PDF first",
+        variant: "destructive"
+      });
+      return;
+    }
+
+    try {
+      const annotationRequest = {
+        ...signatureData,
+        pdf_id: pdfId,
+        page: currentPage,
+        layer: layers.length
+      };
+
+      const newAnnotation = await ApiService.createAnnotation(annotationRequest);
+      setAnnotations(prev => [...prev, newAnnotation]);
+      addToHistory([...annotations, newAnnotation]);
+      
+      toast({
+        title: "Signature added",
+        description: `Signature placed on page ${currentPage}`
+      });
+    } catch (error) {
+      console.error('Error adding signature:', error);
+      toast({
+        title: "Error adding signature",
+        description: "Failed to save signature. Please try again.",
+        variant: "destructive"
+      });
+    }
   };
 
   const addToHistory = (newAnnotations) => {
@@ -175,7 +272,7 @@ const PDFEditor = () => {
   };
 
   const handleExport = () => {
-    // Mock export functionality
+    // Mock export functionality for now
     toast({
       title: "Export started",
       description: "Your PDF is being processed for download..."
@@ -189,19 +286,43 @@ const PDFEditor = () => {
     }, 2000);
   };
 
-  const handleSaveProject = () => {
-    const projectData = {
-      annotations,
-      layers,
-      currentPage,
-      timestamp: new Date().toISOString()
-    };
-    
-    localStorage.setItem('pdfEditor_project', JSON.stringify(projectData));
-    toast({
-      title: "Project saved",
-      description: "Your work has been saved locally"
-    });
+  const handleSaveProject = async () => {
+    if (!pdfId) {
+      toast({
+        title: "No PDF loaded",
+        description: "Please upload a PDF first",
+        variant: "destructive"
+      });
+      return;
+    }
+
+    try {
+      const projectData = {
+        name: `Project ${new Date().toLocaleDateString()}`,
+        pdf_id: pdfId,
+        current_page: currentPage,
+        zoom_level: zoomLevel
+      };
+
+      await ApiService.createProject(projectData);
+      
+      toast({
+        title: "Project saved",
+        description: "Your work has been saved to the database"
+      });
+    } catch (error) {
+      console.error('Error saving project:', error);
+      toast({
+        title: "Save failed",
+        description: "Failed to save project. Please try again.",
+        variant: "destructive"
+      });
+    }
+  };
+
+  const getPdfUrl = () => {
+    if (!pdfId) return null;
+    return ApiService.getPDFFileUrl(pdfId);
   };
 
   return (
@@ -217,9 +338,10 @@ const PDFEditor = () => {
                 size="sm"
                 onClick={() => fileInputRef.current?.click()}
                 className="flex items-center space-x-2"
+                disabled={isLoading}
               >
                 <Upload className="h-4 w-4" />
-                <span>Upload PDF</span>
+                <span>{isLoading ? 'Uploading...' : 'Upload PDF'}</span>
               </Button>
               <input
                 ref={fileInputRef}
@@ -252,6 +374,7 @@ const PDFEditor = () => {
               variant="outline"
               size="sm"
               onClick={handleSaveProject}
+              disabled={!pdfId}
             >
               <Save className="h-4 w-4" />
             </Button>
@@ -259,6 +382,7 @@ const PDFEditor = () => {
               variant="default"
               size="sm"
               onClick={handleExport}
+              disabled={!pdfId}
             >
               <Download className="h-4 w-4" />
               <span className="ml-2">Export</span>
@@ -315,7 +439,7 @@ const PDFEditor = () => {
                   variant="outline"
                   size="sm"
                   onClick={() => handlePageChange('prev')}
-                  disabled={currentPage === 1}
+                  disabled={currentPage === 1 || !pdfId}
                 >
                   Previous
                 </Button>
@@ -326,7 +450,7 @@ const PDFEditor = () => {
                   variant="outline"
                   size="sm"
                   onClick={() => handlePageChange('next')}
-                  disabled={currentPage === totalPages}
+                  disabled={currentPage === totalPages || !pdfId}
                 >
                   Next
                 </Button>
@@ -358,14 +482,35 @@ const PDFEditor = () => {
 
           {/* PDF Viewer */}
           <div className="flex-1 bg-gray-100 overflow-auto">
-            <PDFViewer
-              pdfData={pdfData}
-              currentPage={currentPage}
-              zoomLevel={zoomLevel}
-              selectedTool={selectedTool}
-              annotations={annotations}
-              onAddAnnotation={handleAddAnnotation}
-            />
+            {pdfId ? (
+              <PDFViewer
+                pdfUrl={getPdfUrl()}
+                currentPage={currentPage}
+                zoomLevel={zoomLevel}
+                selectedTool={selectedTool}
+                annotations={annotations}
+                onAddAnnotation={handleAddAnnotation}
+              />
+            ) : (
+              <div className="flex items-center justify-center h-full">
+                <div className="text-center">
+                  <Upload className="h-16 w-16 text-gray-400 mx-auto mb-4" />
+                  <h3 className="text-lg font-medium text-gray-900 mb-2">
+                    No PDF loaded
+                  </h3>
+                  <p className="text-gray-600 mb-4">
+                    Upload a PDF file to start editing
+                  </p>
+                  <Button
+                    onClick={() => fileInputRef.current?.click()}
+                    disabled={isLoading}
+                  >
+                    <Upload className="h-4 w-4 mr-2" />
+                    {isLoading ? 'Uploading...' : 'Upload PDF'}
+                  </Button>
+                </div>
+              </div>
+            )}
           </div>
         </div>
       </div>
