@@ -4,58 +4,89 @@ import { Card, CardContent, CardHeader, CardTitle } from './ui/card';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from './ui/dialog';
 import { useToast } from '../hooks/use-toast';
 import { Upload, Trash2, Plus, Download } from 'lucide-react';
+import ApiService from '../services/apiService';
 
 const SignatureLibrary = ({ signatures, onSignaturesChange, onAddSignature }) => {
   const [isUploadDialogOpen, setIsUploadDialogOpen] = useState(false);
+  const [isLoading, setIsLoading] = useState(false);
   const fileInputRef = useRef(null);
   const { toast } = useToast();
 
-  const handleSignatureUpload = (event) => {
+  const handleSignatureUpload = async (event) => {
     const file = event.target.files[0];
-    if (file) {
-      const validTypes = ['image/png', 'image/jpeg', 'image/svg+xml', 'image/gif'];
-      if (!validTypes.includes(file.type)) {
-        toast({
-          title: "Invalid file type",
-          description: "Please select a valid image file (PNG, JPEG, SVG, or GIF)",
-          variant: "destructive"
-        });
-        return;
-      }
+    if (!file) return;
 
+    const validTypes = ['image/png', 'image/jpeg', 'image/svg+xml', 'image/gif'];
+    if (!validTypes.includes(file.type)) {
+      toast({
+        title: "Invalid file type",
+        description: "Please select a valid image file (PNG, JPEG, SVG, or GIF)",
+        variant: "destructive"
+      });
+      return;
+    }
+
+    setIsLoading(true);
+    try {
       const reader = new FileReader();
-      reader.onload = (e) => {
-        const newSignature = {
-          id: Date.now(),
-          name: file.name.replace(/\.[^/.]+$/, ""),
-          imageData: e.target.result,
-          dateAdded: new Date().toISOString()
-        };
+      reader.onload = async (e) => {
+        try {
+          const newSignature = await ApiService.createSignature(
+            file.name.replace(/\.[^/.]+$/, ""), // Remove file extension
+            e.target.result, // base64 data
+            file.type
+          );
 
-        const updatedSignatures = [...signatures, newSignature];
-        onSignaturesChange(updatedSignatures);
-        localStorage.setItem('pdfEditor_signatures', JSON.stringify(updatedSignatures));
-        
-        toast({
-          title: "Signature added",
-          description: `${newSignature.name} has been saved to your library`
-        });
-        
-        setIsUploadDialogOpen(false);
+          const updatedSignatures = [...signatures, newSignature];
+          onSignaturesChange(updatedSignatures);
+          
+          toast({
+            title: "Signature added",
+            description: `${newSignature.name} has been saved to your library`
+          });
+          
+          setIsUploadDialogOpen(false);
+        } catch (error) {
+          console.error('Error creating signature:', error);
+          toast({
+            title: "Upload failed",
+            description: "Failed to save signature. Please try again.",
+            variant: "destructive"
+          });
+        } finally {
+          setIsLoading(false);
+        }
       };
       reader.readAsDataURL(file);
+    } catch (error) {
+      console.error('Error reading file:', error);
+      toast({
+        title: "Upload failed",
+        description: "Failed to read file. Please try again.",
+        variant: "destructive"
+      });
+      setIsLoading(false);
     }
   };
 
-  const handleDeleteSignature = (signatureId) => {
-    const updatedSignatures = signatures.filter(sig => sig.id !== signatureId);
-    onSignaturesChange(updatedSignatures);
-    localStorage.setItem('pdfEditor_signatures', JSON.stringify(updatedSignatures));
-    
-    toast({
-      title: "Signature deleted",
-      description: "Signature has been removed from your library"
-    });
+  const handleDeleteSignature = async (signatureId) => {
+    try {
+      await ApiService.deleteSignature(signatureId);
+      const updatedSignatures = signatures.filter(sig => sig.id !== signatureId);
+      onSignaturesChange(updatedSignatures);
+      
+      toast({
+        title: "Signature deleted",
+        description: "Signature has been removed from your library"
+      });
+    } catch (error) {
+      console.error('Error deleting signature:', error);
+      toast({
+        title: "Delete failed",
+        description: "Failed to delete signature. Please try again.",
+        variant: "destructive"
+      });
+    }
   };
 
   const handleUseSignature = (signature) => {
@@ -65,7 +96,7 @@ const SignatureLibrary = ({ signatures, onSignaturesChange, onAddSignature }) =>
       y: 100,
       width: 200,
       height: 100,
-      imageData: signature.imageData
+      image_data: signature.image_data
     });
   };
 
@@ -87,31 +118,47 @@ const SignatureLibrary = ({ signatures, onSignaturesChange, onAddSignature }) =>
 
   const handleImportSignatures = (event) => {
     const file = event.target.files[0];
-    if (file) {
-      const reader = new FileReader();
-      reader.onload = (e) => {
-        try {
-          const importedSignatures = JSON.parse(e.target.result);
-          if (Array.isArray(importedSignatures)) {
-            const updatedSignatures = [...signatures, ...importedSignatures];
-            onSignaturesChange(updatedSignatures);
-            localStorage.setItem('pdfEditor_signatures', JSON.stringify(updatedSignatures));
-            
-            toast({
-              title: "Signatures imported",
-              description: `${importedSignatures.length} signatures have been imported`
-            });
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = async (e) => {
+      try {
+        const importedSignatures = JSON.parse(e.target.result);
+        if (Array.isArray(importedSignatures)) {
+          // Import each signature to the backend
+          let importedCount = 0;
+          for (const sig of importedSignatures) {
+            try {
+              const newSignature = await ApiService.createSignature(
+                sig.name,
+                sig.image_data,
+                sig.file_type
+              );
+              importedCount++;
+            } catch (error) {
+              console.error('Error importing signature:', error);
+            }
           }
-        } catch (error) {
+          
+          // Reload signatures from backend
+          const updatedSignatures = await ApiService.getSignatures();
+          onSignaturesChange(updatedSignatures);
+          
           toast({
-            title: "Import failed",
-            description: "Invalid signature file format",
-            variant: "destructive"
+            title: "Signatures imported",
+            description: `${importedCount} signatures have been imported`
           });
         }
-      };
-      reader.readAsText(file);
-    }
+      } catch (error) {
+        console.error('Error importing signatures:', error);
+        toast({
+          title: "Import failed",
+          description: "Invalid signature file format",
+          variant: "destructive"
+        });
+      }
+    };
+    reader.readAsText(file);
   };
 
   return (
@@ -138,9 +185,10 @@ const SignatureLibrary = ({ signatures, onSignaturesChange, onAddSignature }) =>
                     variant="outline"
                     onClick={() => fileInputRef.current?.click()}
                     className="w-full"
+                    disabled={isLoading}
                   >
                     <Upload className="h-4 w-4 mr-2" />
-                    Upload Signature Image
+                    {isLoading ? 'Uploading...' : 'Upload Signature Image'}
                   </Button>
                   <input
                     ref={fileInputRef}
@@ -211,7 +259,7 @@ const SignatureLibrary = ({ signatures, onSignaturesChange, onAddSignature }) =>
                 
                 <div className="bg-gray-50 rounded p-2">
                   <img
-                    src={signature.imageData}
+                    src={signature.image_data}
                     alt={signature.name}
                     className="max-w-full h-12 object-contain mx-auto"
                   />
@@ -236,6 +284,7 @@ const SignatureLibrary = ({ signatures, onSignaturesChange, onAddSignature }) =>
             <li>• Upload transparent PNG files for best results</li>
             <li>• Keep signature images under 2MB</li>
             <li>• Export your library to backup signatures</li>
+            <li>• Signatures are now saved to the database</li>
           </ul>
         </div>
       </CardContent>
