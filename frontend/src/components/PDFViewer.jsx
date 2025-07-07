@@ -2,7 +2,7 @@ import React, { useRef, useEffect, useState } from 'react';
 import { Card } from './ui/card';
 
 const PDFViewer = ({ 
-  pdfData, 
+  pdfUrl, 
   currentPage, 
   zoomLevel, 
   selectedTool, 
@@ -13,80 +13,128 @@ const PDFViewer = ({
   const [isDrawing, setIsDrawing] = useState(false);
   const [startPoint, setStartPoint] = useState(null);
   const [currentAnnotation, setCurrentAnnotation] = useState(null);
+  const [pdfLoaded, setPdfLoaded] = useState(false);
 
   useEffect(() => {
-    drawPDF();
-  }, [pdfData, currentPage, zoomLevel, annotations]);
+    if (pdfUrl) {
+      loadPDF();
+    }
+  }, [pdfUrl, currentPage, zoomLevel]);
 
-  const drawPDF = () => {
+  useEffect(() => {
+    drawAnnotations();
+  }, [annotations, currentPage, zoomLevel, pdfLoaded]);
+
+  const loadPDF = async () => {
     const canvas = canvasRef.current;
-    if (!canvas) return;
+    if (!canvas || !pdfUrl) return;
+
+    try {
+      // For now, create a mock PDF representation
+      // In a full implementation, you would use PDF.js here
+      const ctx = canvas.getContext('2d');
+      
+      // Set canvas size
+      canvas.width = 800 * zoomLevel;
+      canvas.height = 1000 * zoomLevel;
+
+      // Clear canvas
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+      // Draw PDF page background
+      ctx.fillStyle = 'white';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+      // Add a border
+      ctx.strokeStyle = '#ccc';
+      ctx.lineWidth = 1;
+      ctx.strokeRect(0, 0, canvas.width, canvas.height);
+
+      // Draw mock PDF content
+      ctx.fillStyle = '#333';
+      ctx.font = `${16 * zoomLevel}px Arial`;
+      ctx.fillText(`PDF Page ${currentPage}`, 50 * zoomLevel, 50 * zoomLevel);
+      
+      // Draw some mock content lines to simulate real PDF
+      ctx.font = `${12 * zoomLevel}px Arial`;
+      for (let i = 0; i < 25; i++) {
+        const lineText = `This is line ${i + 1} of the PDF document content. You can add annotations, signatures, and shapes to this document.`;
+        ctx.fillText(
+          lineText,
+          50 * zoomLevel,
+          (80 + i * 25) * zoomLevel
+        );
+      }
+
+      // Add some mock form fields
+      ctx.strokeStyle = '#666';
+      ctx.lineWidth = 1 * zoomLevel;
+      
+      // Signature field
+      ctx.strokeRect(400 * zoomLevel, 200 * zoomLevel, 200 * zoomLevel, 50 * zoomLevel);
+      ctx.fillStyle = '#999';
+      ctx.font = `${10 * zoomLevel}px Arial`;
+      ctx.fillText('Signature:', 400 * zoomLevel, 190 * zoomLevel);
+      
+      // Date field
+      ctx.strokeRect(400 * zoomLevel, 300 * zoomLevel, 150 * zoomLevel, 30 * zoomLevel);
+      ctx.fillText('Date:', 400 * zoomLevel, 290 * zoomLevel);
+      
+      // Name field
+      ctx.strokeRect(50 * zoomLevel, 700 * zoomLevel, 300 * zoomLevel, 30 * zoomLevel);
+      ctx.fillText('Name:', 50 * zoomLevel, 690 * zoomLevel);
+
+      setPdfLoaded(true);
+    } catch (error) {
+      console.error('Error loading PDF:', error);
+      setPdfLoaded(false);
+    }
+  };
+
+  const drawAnnotations = () => {
+    const canvas = canvasRef.current;
+    if (!canvas || !pdfLoaded) return;
 
     const ctx = canvas.getContext('2d');
     
-    // Set canvas size
-    canvas.width = 800 * zoomLevel;
-    canvas.height = 1000 * zoomLevel;
-
-    // Clear canvas
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-
-    // Draw PDF page background (mock)
-    ctx.fillStyle = 'white';
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
-
-    // Draw mock PDF content
-    ctx.fillStyle = '#333';
-    ctx.font = `${16 * zoomLevel}px Arial`;
-    ctx.fillText(`PDF Page ${currentPage}`, 50 * zoomLevel, 50 * zoomLevel);
-    
-    // Draw some mock content lines
-    for (let i = 0; i < 20; i++) {
-      ctx.fillText(
-        `This is line ${i + 1} of the PDF document content...`,
-        50 * zoomLevel,
-        (80 + i * 30) * zoomLevel
-      );
-    }
-
-    // Draw annotations
-    drawAnnotations(ctx);
-  };
-
-  const drawAnnotations = (ctx) => {
-    annotations
-      .filter(annotation => annotation.page === currentPage)
-      .forEach(annotation => {
-        drawAnnotation(ctx, annotation);
-      });
+    // Redraw PDF first
+    loadPDF().then(() => {
+      // Draw annotations on top
+      annotations
+        .filter(annotation => annotation.page === currentPage)
+        .forEach(annotation => {
+          drawAnnotation(ctx, annotation);
+        });
+    });
   };
 
   const drawAnnotation = (ctx, annotation) => {
-    const { type, x, y, width, height, color, text } = annotation;
+    const { type, x, y, width, height, color, text, image_data } = annotation;
     
     ctx.save();
     
     switch (type) {
       case 'text':
         ctx.fillStyle = color || '#000';
-        ctx.font = `${(annotation.fontSize || 14) * zoomLevel}px Arial`;
+        ctx.font = `${(annotation.font_size || 14) * zoomLevel}px Arial`;
         ctx.fillText(text || 'Text', x * zoomLevel, y * zoomLevel);
         break;
         
       case 'rectangle':
         ctx.strokeStyle = color || '#000';
         ctx.lineWidth = 2 * zoomLevel;
-        ctx.strokeRect(x * zoomLevel, y * zoomLevel, width * zoomLevel, height * zoomLevel);
+        ctx.strokeRect(x * zoomLevel, y * zoomLevel, (width || 100) * zoomLevel, (height || 100) * zoomLevel);
         break;
         
       case 'circle':
         ctx.strokeStyle = color || '#000';
         ctx.lineWidth = 2 * zoomLevel;
         ctx.beginPath();
+        const radius = Math.min(width || 50, height || 50) / 2;
         ctx.arc(
-          (x + width / 2) * zoomLevel,
-          (y + height / 2) * zoomLevel,
-          (Math.min(width, height) / 2) * zoomLevel,
+          (x + (width || 50) / 2) * zoomLevel,
+          (y + (height || 50) / 2) * zoomLevel,
+          radius * zoomLevel,
           0,
           2 * Math.PI
         );
@@ -95,22 +143,23 @@ const PDFViewer = ({
         
       case 'highlight':
         ctx.fillStyle = color || 'rgba(255, 255, 0, 0.3)';
-        ctx.fillRect(x * zoomLevel, y * zoomLevel, width * zoomLevel, height * zoomLevel);
+        ctx.fillRect(x * zoomLevel, y * zoomLevel, (width || 100) * zoomLevel, (height || 20) * zoomLevel);
         break;
         
       case 'arrow':
         ctx.strokeStyle = color || '#000';
         ctx.lineWidth = 2 * zoomLevel;
-        drawArrow(ctx, x * zoomLevel, y * zoomLevel, (x + width) * zoomLevel, (y + height) * zoomLevel);
+        drawArrow(ctx, x * zoomLevel, y * zoomLevel, (x + (width || 100)) * zoomLevel, (y + (height || 100)) * zoomLevel);
         break;
         
       case 'signature':
-        if (annotation.imageData) {
+      case 'image':
+        if (image_data) {
           const img = new Image();
           img.onload = () => {
-            ctx.drawImage(img, x * zoomLevel, y * zoomLevel, width * zoomLevel, height * zoomLevel);
+            ctx.drawImage(img, x * zoomLevel, y * zoomLevel, (width || 200) * zoomLevel, (height || 100) * zoomLevel);
           };
-          img.src = annotation.imageData;
+          img.src = image_data;
         }
         break;
     }
@@ -157,7 +206,7 @@ const PDFViewer = ({
           x: point.x,
           y: point.y,
           text: text,
-          fontSize: 14,
+          font_size: 14,
           color: '#000'
         });
       }
@@ -199,6 +248,16 @@ const PDFViewer = ({
     setStartPoint(null);
     setCurrentAnnotation(null);
   };
+
+  if (!pdfUrl) {
+    return (
+      <div className="flex items-center justify-center h-full">
+        <div className="text-center">
+          <div className="text-gray-500">No PDF loaded</div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="flex items-center justify-center p-8 min-h-full">
