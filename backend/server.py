@@ -53,11 +53,17 @@ async def get_status_checks():
     return [StatusCheck(**status_check) for status_check in status_checks]
 
 # Dependency to provide PDFService
-async def get_pdf_service() -> PDFService:
+def get_pdf_service() -> PDFService:
     return PDFService(db)
 
-# Override the dependency in pdf_routes
-pdf_router.dependency_overrides[PDFService] = get_pdf_service
+# Update pdf_routes dependency
+def get_pdf_service_dependency():
+    return get_pdf_service()
+
+# Include PDF routes with dependency injection
+pdf_router.dependency_overrides.update({
+    "get_pdf_service": get_pdf_service_dependency
+})
 
 # Include PDF routes
 api_router.include_router(pdf_router, prefix="/pdf", tags=["pdf"])
